@@ -1,0 +1,27 @@
+[package]
+name = "bear"
+version = "3.0.0"
+authors = ["László Nagy <rizsotto at gmail dot com>"]
+license = "GPL3"
+description = "BuildEAR is a tool that generates a compilation database for clang tooling."
+
+[[bin]]
+name = "bear"
+path = "src/main.rs"
+
+[[bin]]
+name = "intercept-cc"
+path = "src/wrapper.rs"
+
+[[bin]]
+name = "intercept-cxx"
+path = "src/wrapper.rs"
+
+[dependencies]                                                                                            
+serde = "1.0.15"                                                                                          
+serde_derive = "1.0.15"                                                                                   
+serde_json = "1.0.3"
+
+[dependencies.clap]
+version = "~2.26.0"
+default-features = false
