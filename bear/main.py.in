@@ -362,7 +362,7 @@ def create_intercept_parser():
 
 
 class Compilation:
-    def __init__(self, compiler, phase, flags, source, directory, output):
+    def __init__(self, compiler, phase, flags, source, directory, output, all_files=None):
         """ Constructor for a single compilation.
 
         This method just normalize the paths and initialize values. """
@@ -374,6 +374,9 @@ class Compilation:
         self.source = source if os.path.isabs(source) else \
             os.path.normpath(os.path.join(self.directory, source))
         self.output = output
+        self.all_files = all_files
+        if all_files is not None:
+            self.all_files = list(all_files)
 
     def __hash__(self):
         return hash(str(self.as_dict()))
@@ -389,15 +392,31 @@ class Compilation:
     def as_db_entry(self):
         """ This method creates a compilation database entry. """
 
+        all_fs = []
+        if self.all_files is not None:
+            all_fs = self.all_files
         relative = os.path.relpath(self.source, self.directory)
-        compiler = 'cc' if self.compiler == 'c' else 'c++'
+        if self.compiler == "ld":
+            compiler = self.compiler
+        else:
+            compiler = 'cc' if self.compiler == 'c' else 'c++'
         output = ['-o', self.output] if self.output else []
-        return {
-            'file': relative,
-            'arguments':
-                [compiler, self.phase] + self.flags + output + [relative],
-            'directory': self.directory
-        }
+        if len(all_fs) > 0:
+            return {
+                'loader': 'ld',
+                'output': output,
+                'arguments':
+                    [compiler, self.phase] + self.flags + output + all_fs,
+                'directory': self.directory
+            }
+        else:
+            return {
+                'file': relative,
+                'output': output,
+                'arguments':
+                    [compiler, self.phase] + self.flags + output + [relative],
+                'directory': self.directory
+            }
 
     @classmethod
     def from_db_entry(cls, entry):
@@ -425,17 +444,28 @@ class Compilation:
         :return: stream of CompilationDbEntry objects """
 
         candidate = cls._split_command(execution.cmd, cc, cxx)
-        for source in candidate.files if candidate else []:
+        if candidate and candidate.compiler == "ld":
             output = candidate.output[0] if candidate.output else None
-            phase = candidate.phase[0] if candidate.phase else '-c'
+            phase = ' '
             result = Compilation(directory=execution.cwd,
-                                 source=source,
+                                 source=candidate.files[0],
                                  compiler=candidate.compiler,
                                  phase=phase,
                                  flags=candidate.flags,
-                                 output=output)
-            if os.path.isfile(result.source):
-                yield result
+                                 output=output, all_files=candidate.files)
+            yield result
+        else:
+            for source in candidate.files if candidate else []:
+                output = candidate.output[0] if candidate.output else None
+                phase = candidate.phase[0] if candidate.phase else '-c'
+                result = Compilation(directory=execution.cwd,
+                                     source=source,
+                                     compiler=candidate.compiler,
+                                     phase=phase,
+                                     flags=candidate.flags,
+                                     output=output)
+                if os.path.isfile(result.source):
+                    yield result
 
     @classmethod
     def _split_compiler(cls, command, cc, cxx):
@@ -456,6 +486,9 @@ class Compilation:
         def is_c_compiler(cmd):
             return os.path.basename(cc) == cmd or \
                 any(pattern.match(cmd) for pattern in COMPILER_PATTERNS_CC)
+
+        def is_command_ld(cmd):
+            return os.path.basename(cmd).endswith("ld")
 
         def is_cxx_compiler(cmd):
             return os.path.basename(cxx) == cmd or \
@@ -480,6 +513,8 @@ class Compilation:
                 return 'c', parameters
             elif is_cxx_compiler(executable):
                 return 'c++', parameters
+            elif is_command_ld(executable):
+                return 'ld', parameters
         return None
 
     @classmethod
@@ -503,11 +538,13 @@ class Compilation:
                                     flags=[],
                                     files=[],
                                     output=[])
+        is_loader = compiler_and_arguments[0] == "ld"
+        logging.debug('loader flag was: %s', str(is_loader))
         # iterate on the compile options
         args = iter(compiler_and_arguments[1])
         for arg in args:
             # quit when compilation pass is not involved
-            if arg in {'-E', '-cc1', '-cc1as', '-M', '-MM', '-###'}:
+            if arg in {'-E', '-cc1', '-cc1as', '-M', '-MM', '-###'} and not is_loader:
                 return None
             elif arg in {'-S', '-c'}:
                 result.phase.append(arg)
@@ -525,7 +562,7 @@ class Compilation:
             elif arg == '-o':
                 result.output.append(next(args))
             # parameter which looks source file is taken...
-            elif re.match(r'^[^-].+', arg) and classify_source(arg):
+            elif re.match(r'^[^-].+', arg) and classify_source(arg, c_compiler=not is_loader, is_loader=is_loader):
                 result.files.append(arg)
             # and consider everything else as compile option.
             else:
@@ -562,12 +599,13 @@ class CompilationDatabase:
                     yield compilation
 
 
-def classify_source(filename, c_compiler=True):
+def classify_source(filename, c_compiler=True, is_loader=False):
     """ Classify source file names and returns the presumed language,
     based on the file name extension.
 
     :param filename:    the source file name
     :param c_compiler:  indicate that the compiler is a C compiler,
+    :param is_loader: Indicate that this is a loader command
     :return: the language from file name extension. """
 
     mapping = {
@@ -592,6 +630,9 @@ def classify_source(filename, c_compiler=True):
         '.sx': 'assembly',
         '.asm': 'assembly'
     }
+
+    if is_loader:
+        mapping['.o'] = 'objectfile'
 
     __, extension = os.path.splitext(os.path.basename(filename))
     return mapping.get(extension)
