@@ -405,16 +405,15 @@ class Compilation:
             return {
                 'loader': 'ld',
                 'output': output,
-                'arguments':
-                    [compiler, self.phase] + self.flags + output + all_fs,
-                'directory': self.directory
+                'arguments': self.flags,
+                'directory': self.directory,
+                'files': all_fs
             }
         else:
             return {
                 'file': relative,
                 'output': output,
-                'arguments':
-                    [compiler, self.phase] + self.flags + output + [relative],
+                'arguments': self.flags,
                 'directory': self.directory
             }
 
